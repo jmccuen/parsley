@@ -32,7 +32,7 @@ import org.slf4j.Logger;
 public class Parsley extends Resource {
 
 	private static final long serialVersionUID = 1L;
-	protected static Logger _logger = LogUtilities.getInstance().getApplicationLogger(Parsley.class);
+	protected final static Logger _logger = LogUtilities.getInstance().getApplicationLogger(Parsley.class);
 	private String _dateFormat = "RAW";
 	private Long _minDateMilliseconds = 946598400000L;
 
