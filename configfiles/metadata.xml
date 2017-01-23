@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<Entities>
+    <ExtensionPackages>
+        <ExtensionPackage dependsOn="" description="" minimumThingWorxVersion="6.6.5" name="parsley" packageVersion="2.0.7" vendor="James McCuen">
+            <JarResources>
+                <FileResource description="" file="parsley.jar" type="JAR"/>
+            </JarResources>
+        </ExtensionPackage>
+    </ExtensionPackages>
+    <Resources>
+        <Resource aspect.isCreatable="false" aspect.isEditableExtensionObject="false" className="com.thingworx.resources.parsley.Parsley" description="" name="Parsley"/>
+    </Resources>
+</Entities>

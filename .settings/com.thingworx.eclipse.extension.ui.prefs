@@ -1,0 +1,6 @@
+build_framework=ANT
+eclipse.preferences.version=1
+min_thingworx_version=6.6.5
+package_version=1.0.0
+project_vendor=James McCuen
+sdk_location=D\:\\Thingworx Extensions\\SDK\\MED-61098-CD-066_SP5_ThingWorx-Extension-SDK-6-6-5.zip
