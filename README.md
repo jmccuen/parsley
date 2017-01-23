@@ -1,3 +1,5 @@
+![parsleyIcon.png](https://bitbucket.org/repo/koL5oG/images/3257769548-parsleyIcon.png)
+
 # About Parsley #
 
 Parsley aims to allow you to parse CSV files, JSON Objects, and JSON Arrays into InfoTables as painlessly as possible.
