@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <Entities>
     <ExtensionPackages>
-        <ExtensionPackage dependsOn="" description="" minimumThingWorxVersion="6.6.5" name="parsley" packageVersion="2.0.8" vendor="James McCuen">
+        <ExtensionPackage dependsOn="" description="" minimumThingWorxVersion="6.6.5" name="parsley" packageVersion="2.1.0" vendor="James McCuen">
             <JarResources>
                 <FileResource description="" file="parsley.jar" type="JAR"/>
             </JarResources>
