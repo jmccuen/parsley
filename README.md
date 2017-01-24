@@ -6,6 +6,7 @@ Parsley aims to allow you to parse CSV files, JSON Objects, and JSON Arrays into
 The Parsley Extension for ThingWorx provides a Parsley Resource with the following services:
 
 * ParseJSON 
+
 * ParseCSV
 
 This extension utilizes the Thingworx 6.6.5 SDK. 
