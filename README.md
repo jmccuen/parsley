@@ -53,4 +53,4 @@ These services can be used to parse a JSON object or CSV file directly into an I
 
 This extension was tested for compatibility with the following ThingWorx Platform version(s) and Operating System(s):
 
-* ThingWorx 6.6.5
+* ThingWorx 6.6.5+
