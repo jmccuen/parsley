@@ -3,7 +3,7 @@
     <ExtensionPackages>
         <ExtensionPackage dependsOn="" description="" minimumThingWorxVersion="6.6.5" name="parsley" packageVersion="2.1.1" vendor="Thingworx Labs">
             <JarResources>
-                <FileResource description="" file="parsley.jar" type="JAR"/>
+                <FileResource description="Parsley - A Parsing Library" file="parsley.jar" type="JAR"/>
             </JarResources>
         </ExtensionPackage>
     </ExtensionPackages>
