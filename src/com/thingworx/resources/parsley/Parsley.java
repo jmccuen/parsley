@@ -191,9 +191,14 @@ public class Parsley extends Resource {
 					"Unable To Open [" + path + "] in [" + fileRepository + "] : " + eOpen.getMessage(),
 					RESTAPIConstants.StatusCode.STATUS_NOT_FOUND);
 		}
-		parseFromReader(reader, it, columnMappings, hasHeader, fieldDelimiter, stringDelimiter, latitudeField,
+		try {parseFromReader(reader, it, columnMappings, hasHeader, fieldDelimiter, stringDelimiter, latitudeField,
 				longitudeField, dateFormat);
-
+		} catch (IndexOutOfBoundsException e) {
+			throw new IndexOutOfBoundsException(
+						"Array index was out of bounds. This generally happens when either the number of columns do not match up to those provided by the data shape."
+						+ " It can also occure if there was an error parsing a datetime based on the input format. - " + e.getMessage()
+						);
+		}
 		return it;
 	}
 
@@ -212,6 +217,7 @@ public class Parsley extends Resource {
 					field.setOrdinal(i);
 					field.setDescription("");
 					ds.addFieldDefinition(field);
+					i++;
 				}
 				br.close();
 			return ds;
