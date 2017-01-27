@@ -217,7 +217,6 @@ public class Parsley extends Resource {
 					field.setOrdinal(i);
 					field.setDescription("");
 					ds.addFieldDefinition(field);
-					i++;
 				}
 				br.close();
 			return ds;
@@ -449,13 +448,15 @@ public class Parsley extends Resource {
 						result.setDataShape(itemTable.getDataShape());
 						result.addRow(values);
 					} else {
-						FieldDefinition definition = new FieldDefinition();
-						definition.setName("value" + (i + 1));
-						definition.setOrdinal(i);
-						definition.setBaseType(getType(item));
+							if (i == 0) {
+								FieldDefinition definition = new FieldDefinition();
+								definition.setName("values");
+								definition.setOrdinal(i);
+								definition.setBaseType(getType(item));
+								result.addField(definition);
+							}
 						ValueCollection values = new ValueCollection();
-						values.put("value" + (i + 1), BaseTypes.ConvertToPrimitive(item, getType(item)));
-						result.addField(definition);
+						values.put("values", BaseTypes.ConvertToPrimitive(item, getType(item)));
 						result.addRow(values);
 					}
 				}
