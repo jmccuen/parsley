@@ -196,7 +196,7 @@ public class Parsley extends Resource {
 		} catch (IndexOutOfBoundsException e) {
 			throw new IndexOutOfBoundsException(
 						"Array index was out of bounds. This generally happens when either the number of columns do not match up to those provided by the data shape."
-						+ " It can also occure if there was an error parsing a datetime based on the input format. - " + e.getMessage()
+						+ " It can also occur if there was an error parsing a datetime based on the input format. - " + e.getMessage()
 						);
 		}
 		return it;
