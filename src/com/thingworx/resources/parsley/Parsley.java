@@ -16,15 +16,20 @@ import com.thingworx.things.Thing;
 import com.thingworx.things.repository.FileRepositoryThing;
 import com.thingworx.types.BaseTypes;
 import com.thingworx.types.InfoTable;
+import com.thingworx.types.collections.AspectCollection;
 import com.thingworx.types.collections.ValueCollection;
+import com.thingworx.types.collections.ValueCollectionList;
+import com.thingworx.types.primitives.structs.Location;
+
 import java.io.BufferedReader;
-import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.Reader;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Iterator;
+
+import org.joda.time.DateTime;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.slf4j.Logger;
@@ -33,7 +38,14 @@ public class Parsley extends Resource {
 
 	private static final long serialVersionUID = 1L;
 	protected final static Logger _logger = LogUtilities.getInstance().getApplicationLogger(Parsley.class);
+	
+	//set the default date format
 	private String _dateFormat = "RAW";
+	private Boolean _hasDatashape = false;
+	private Boolean _hasHeader = false;
+	private String _customHeaders;
+	
+	//This is the value for which, if no data shape is passed in, Parsley will assume a number value is a date when parsing JSON
 	private Long _minDateMilliseconds = 946598400000L;
 
 	@ThingworxServiceDefinition(name = "ParseJSON", description = "Parse JSON")
@@ -49,8 +61,8 @@ public class Parsley extends Resource {
 			throws Exception {
 
 		_logger.trace("Entering Service: ParseJSON");
-		_logger.trace("Exiting Service: ParseJSON");
 
+		//TODO: this should really check to make sure the class is a JSON Array or a JSON Object
 		if (json == null) {
 			throw new InvalidRequestException("JSON Object must be specified",
 					RESTAPIConstants.StatusCode.STATUS_NOT_ACCEPTABLE);
@@ -62,6 +74,7 @@ public class Parsley extends Resource {
 			_dateFormat = dateFormat;
 		}
 
+		//this tracks the ordinal of the fields in the datashape; this is only used if no datashape is passed in
 		int ord = 0;
 		InfoTable it;
 		Boolean hasShape = false;
@@ -80,6 +93,7 @@ public class Parsley extends Resource {
 		}
 		;
 
+		//this is the equivalent of an InfoTable row item
 		JSONObject values = new JSONObject();
 		Iterator<?> keys = json.keys();
 
@@ -88,7 +102,9 @@ public class Parsley extends Resource {
 			String key = (String) keys.next();
 			Object value = json.get(key);
 			String fieldShape = null;
-			try {
+			
+			//only create a new field if one hasnt already been added to the infotable for this field
+			try {	
 				fieldShape = it.getField(key).getDataShapeName();
 			} catch (Exception e) {
 			}
@@ -102,12 +118,18 @@ public class Parsley extends Resource {
 				it.addField(field);
 			}
 			ord++;
+			
+			//if I am not able to parse a JSON value at all, return an error for that field
+			//this should really never happen, if it does something went horribly wrong
 			try {
 				value = parseJSONValue(value, fieldShape);
 			} catch (Exception e) {
 				it.getField(key).setBaseType(BaseTypes.STRING);
 				((JSONObject) value).put("ERROR", BaseTypes.STRING);
 			}
+			//if the value was parsed correctly, but bombs out when converting it to the given base type for the field
+			//this will retroactively change the base type on the dataShape to a string
+			//this usually happens if the first value was a number and a later value for the same field is a string
 			try {
 				values.put(key, BaseTypes.ConvertToPrimitive(value, baseType));
 			} catch (Exception e) {
@@ -136,9 +158,17 @@ public class Parsley extends Resource {
 			@ThingworxServiceParameter(name = "fieldDelimiter", description = "Field delimiter", baseType = "STRING", aspects = {
 					"defaultValue:," }) String fieldDelimiter,
 			@ThingworxServiceParameter(name = "stringDelimiter", description = "String value delimiter", baseType = "STRING", aspects = {
-					"defaultValue:\"" }) String stringDelimiter)
+					"defaultValue:\"" }) String stringDelimiter, @ThingworxServiceParameter(name = "customFieldNames", 
+							description = "Comma sperated list of field names to use if there is no datashape", baseType = "STRING") String customHeaders)
 			throws Exception {
 
+		_hasHeader = hasHeader;
+		_dateFormat = dateFormat;
+		_customHeaders = customHeaders;
+		
+		
+		
+		
 		if (!(fileRepository != null && !fileRepository.isEmpty())) {
 			throw new InvalidRequestException("File Repository Must Be Specified",
 					RESTAPIConstants.StatusCode.STATUS_NOT_ACCEPTABLE);
@@ -154,33 +184,13 @@ public class Parsley extends Resource {
 					RESTAPIConstants.StatusCode.STATUS_NOT_FOUND);
 		}
 		FileRepositoryThing repo = (FileRepositoryThing) thing;
-		InfoTable it;
+		InfoTable it = new InfoTable();
+		
+
 		if (!(dataShape != null && !dataShape.isEmpty())) {
-			// throw new InvalidRequestException("Data Shape Must Be Specified",
-			// RESTAPIConstants.StatusCode.STATUS_NOT_ACCEPTABLE);
-			//Need to figure out what the dataShape is
-			if (hasHeader) {
-				InputStreamReader reader;
-				try {
-					reader = new InputStreamReader(repo.openFileForRead(path));
-				} catch (Exception eOpen) {
-					throw new InvalidRequestException(
-							"Unable To Open [" + path + "] in [" + fileRepository + "] : " + eOpen.getMessage(),
-							RESTAPIConstants.StatusCode.STATUS_NOT_FOUND);
-				}
-				try {
-					DataShape ds = getDataShapeCSV(reader,hasHeader,stringDelimiter,fieldDelimiter);
-					it = InfoTableInstanceFactory.createInfoTableFromDataShape(ds.getDataShape());
-				} catch (Exception e) {
-					throw new InvalidRequestException("Error parsing headers into DataShape - " + e.getMessage(),
-							RESTAPIConstants.StatusCode.STATUS_NOT_ACCEPTABLE);
-				};
-				
-			} else {
-				throw new InvalidRequestException("DataShape must be specified if there are no headers",
-						RESTAPIConstants.StatusCode.STATUS_NOT_ACCEPTABLE);
-			}
+			_hasDatashape = false;		
 		} else {
+			_hasDatashape = true;
 			it = InfoTableInstanceFactory.createInfoTableFromDataShape(dataShape);
 		};
 			InputStreamReader reader;
@@ -202,34 +212,28 @@ public class Parsley extends Resource {
 		return it;
 	}
 
-	private DataShape getDataShapeCSV(InputStreamReader reader, Boolean hasHeader, String quoteChar, String delimiter) throws Exception {
-		// TODO Auto-generated method stub
-		DataShape ds = new DataShape();
-		BufferedReader br = new BufferedReader(reader);
-		if (hasHeader) {
-				String headers = br.readLine();
-				String[] array = headers.split(delimiter);
-				int i = 0;
-				for (String header : array) {
-					FieldDefinition field = new FieldDefinition();
-					field.setBaseType(BaseTypes.STRING);
-					field.setName(header);
-					field.setOrdinal(i);
-					field.setDescription("");
-					ds.addFieldDefinition(field);
+	private void setFieldType(InfoTable it, ArrayList<String> fieldValues, HashMap<String,Integer> fieldIndices) throws Exception {
+		//read row values and set infotable appropriately
+		for (FieldDefinition fieldDefinition : it.getDataShape().getFields().values()) {
+			int colIndex = ((Integer) fieldIndices.get(fieldDefinition.getName())).intValue();
+			if (colIndex >= 0) {
+				//if we have a variant that means it hasnt been set yet
+				if (it.getField(fieldDefinition.getName()).getBaseType() == BaseTypes.VARIANT) {
+					it.getField(fieldDefinition.getName()).setBaseType(getTypeFromString(fieldValues.get(colIndex)));
+				} else if (it.getField(fieldDefinition.getName()).getBaseType() != getTypeFromString(fieldValues.get(colIndex))) {
+					it.getField(fieldDefinition.getName()).setBaseType(BaseTypes.STRING);
 				}
-				br.close();
-			return ds;
-			
+			}
 		}
-		return null;
+		
 	}
 
 	protected void parseFromReader(Reader reader, InfoTable it, String columnMappings, Boolean hasHeader,
 			String fieldDelimiter, String stringDelimiter, Double latitudeField, Double longitudeField,
 			String dateFormat) throws Exception {
-		boolean firstRow = true;
 
+		
+		//this really only matters if they have a data shape and a column mapping
 		String[] mappedColumns = new String[0];
 		if (columnMappings != null && !columnMappings.isEmpty()) {
 			mappedColumns = columnMappings.split(";");
@@ -272,7 +276,9 @@ public class Parsley extends Resource {
 
 		StringBuilder currentFieldValue = new StringBuilder();
 
+		int rowNumber = 0;
 		ArrayList<String> fieldValues = new ArrayList<String>();
+		//loop through each character and append to the current field value until you find the next delimiter
 		while (charRead != -1) {
 			if (charRead == quoteChar) {
 				boolean done = false;
@@ -307,15 +313,11 @@ public class Parsley extends Resource {
 				}
 				fieldValues.add(currentFieldValue.toString());
 				currentFieldValue.setLength(0);
-				if (firstRow) {
-					if (!hasHeader.booleanValue()) {
-						processFieldSet(it, fieldValues, columnIndices, latitudeColIndex, longitudeColIndex,
-								dateFormat);
-					}
-					firstRow = false;
-				} else {
-					processFieldSet(it, fieldValues, columnIndices, latitudeColIndex, longitudeColIndex, dateFormat);
-				}
+				
+				//have a row here
+				processFieldSet(it, fieldValues, columnIndices, latitudeColIndex, longitudeColIndex, dateFormat,rowNumber);
+				rowNumber++;
+				
 				fieldValues.clear();
 			} else if (charRead == 13) {
 				br.mark(1);
@@ -325,36 +327,24 @@ public class Parsley extends Resource {
 				}
 				fieldValues.add(currentFieldValue.toString());
 				currentFieldValue.setLength(0);
-				if (firstRow) {
-					if (!hasHeader.booleanValue()) {
-						processFieldSet(it, fieldValues, columnIndices, latitudeColIndex, longitudeColIndex,
-								dateFormat);
-					}
-					firstRow = false;
-				} else {
-					processFieldSet(it, fieldValues, columnIndices, latitudeColIndex, longitudeColIndex, dateFormat);
-				}
+				processFieldSet(it, fieldValues, columnIndices, latitudeColIndex, longitudeColIndex, dateFormat,rowNumber);
+				rowNumber++;
+				
 				fieldValues.clear();
 			} else {
 				currentFieldValue.append((char) charRead);
 			}
 			charRead = br.read();
 		}
-
+		
+		//make sure to add the remaining field value if there was no newline character at the end of the file
 		if (currentFieldValue.length() > 0) {
 			fieldValues.add(currentFieldValue.toString());
-		}
-		;
+		};
 
 		if (fieldValues.size() > 0) {
-			if (firstRow) {
-				if (!hasHeader.booleanValue()) {
-					processFieldSet(it, fieldValues, columnIndices, latitudeColIndex, longitudeColIndex, dateFormat);
-				}
-				firstRow = false;
-			} else {
-				processFieldSet(it, fieldValues, columnIndices, latitudeColIndex, longitudeColIndex, dateFormat);
-			}
+			processFieldSet(it, fieldValues, columnIndices, latitudeColIndex, longitudeColIndex, dateFormat,rowNumber);
+			rowNumber++;
 		}
 		try {
 			reader.close();
@@ -363,72 +353,242 @@ public class Parsley extends Resource {
 	}
 
 	protected void processFieldSet(InfoTable it, ArrayList<String> fieldValues, HashMap<String, Integer> fieldIndices,
-			int latitudeField, int longitudeField, String dateFormat) throws Exception {
-		ValueCollection values = new ValueCollection();
-		for (FieldDefinition fieldDefinition : it.getDataShape().getFields().values()) {
-			int colIndex = ((Integer) fieldIndices.get(fieldDefinition.getName())).intValue();
-			if (colIndex >= 0) {
-				switch (fieldDefinition.getBaseType()) {
-				case DATETIME:
-					String dateValue = (String) fieldValues.get(colIndex);
-					if (dateValue != null && !dateValue.isEmpty()) {
-						if (dateFormat != null) {
-							values.put(fieldDefinition.getName(), BaseTypes.ConvertToPrimitive(
-									DateUtilities.parseDateTime(dateValue, dateFormat), fieldDefinition.getBaseType()));
-						} else {
-							values.put(fieldDefinition.getName(),
-									BaseTypes.ConvertToPrimitive(dateValue, fieldDefinition.getBaseType()));
+			int latitudeField, int longitudeField, String dateFormat, int rowNumber) throws Exception {
+		if (rowNumber == 0 && !_hasDatashape) {
+			if  (_customHeaders == null || _customHeaders.isEmpty()) {
+				if (!_hasHeader) {
+					try {
+						// need to make our own headers if there are none and no custom headers were passed in
+						for (int i=0;i<fieldValues.size();i++) {
+							FieldDefinition field = new FieldDefinition();
+							field.setBaseType(BaseTypes.VARIANT);
+							field.setName("Value"+(i+1));
+							field.setOrdinal(i);
+							field.setDescription("");
+							it.addField(field);
+							
+							//we dont have a field map because there are no fields to map
+							//but we still need this index to call setFieldType later
+							fieldIndices.put("Value"+(i+1), i);
 						}
+						//if we're on row 0 and we dont have headers, lets set out field types if we dont have a data shape
+						setFieldType(it,fieldValues,fieldIndices);
+					} catch (Exception e) {
+						throw new InvalidRequestException("Error creating value headers for data shape - " + e.getMessage(),
+								RESTAPIConstants.StatusCode.STATUS_NOT_ACCEPTABLE);
 					}
-					break;
-				case NUMBER:
-					String numberValue = (String) fieldValues.get(colIndex);
-					if (numberValue != null && !numberValue.isEmpty()) {
-						values.put(fieldDefinition.getName(),
-								BaseTypes.ConvertToPrimitive(numberValue, fieldDefinition.getBaseType()));
-					}
-					break;
-				case LOCATION:
-					if ((latitudeField != -1) && (longitudeField != -1)) {
-						String latitudeValue = (String) fieldValues.get(latitudeField);
-						String longitudeValue = (String) fieldValues.get(longitudeField);
-						if ((latitudeValue != null && !latitudeValue.isEmpty())
-								&& (longitudeValue != null && !longitudeValue.isEmpty())) {
-							values.put(fieldDefinition.getName(), BaseTypes.ConvertToPrimitive(
-									latitudeValue + "," + longitudeValue, fieldDefinition.getBaseType()));
+				} else {
+					//use the headers if theyre there and no custom headers were passed in
+					//we need to replace some characters so we can create a datashape from them
+					try {
+						for (int i=0;i<fieldValues.size();i++) {
+							String name = fieldValues.get(i);
+							
+							//get rid of any weird null characters, strings, parens, which arent allowed in property names
+							name = name.replaceAll("[\uFEFF-\uFFFF]", "");
+							name = name.replaceAll("\\s+","");
+							name = name.replaceAll("[(]","_");
+							name = name.replaceAll("[)]","");
+							
+							//cant start with a number
+							if (Character.isDigit(name.charAt(0))) {
+								name = "_" + name;
+							}
+							
+							FieldDefinition field = new FieldDefinition();
+							field.setBaseType(BaseTypes.VARIANT);
+							field.setName(name);
+							field.setOrdinal(i);
+							field.setDescription("");
+							it.addField(field);
+							
+							fieldIndices.put(name, i);
 						}
-					} else {
-						String value = (String) fieldValues.get(colIndex);
-						if (value != null && !value.isEmpty()) {
-							values.put(fieldDefinition.getName(),
-									BaseTypes.ConvertToPrimitive(value, fieldDefinition.getBaseType()));
-						}
+					} catch (Exception e) {
+						throw new InvalidRequestException("Error parsing headers into DataShape - " + e.getMessage(),
+								RESTAPIConstants.StatusCode.STATUS_NOT_ACCEPTABLE);
+
 					}
-					break;
-				default:
-					String value = (String) fieldValues.get(colIndex);
-					if (value != null) {
-						values.put(fieldDefinition.getName(),
-								BaseTypes.ConvertToPrimitive(value, fieldDefinition.getBaseType()));
-					}
-					break;
 				}
-			} else if ((fieldDefinition.getBaseType() == BaseTypes.LOCATION) && (latitudeField != -1)
-					&& (longitudeField != -1)) {
-				String latitudeValue = (String) fieldValues.get(latitudeField);
-				String longitudeValue = (String) fieldValues.get(longitudeField);
-				if ((latitudeValue != null && !latitudeValue.isEmpty())
-						&& (longitudeValue != null && !longitudeValue.isEmpty())) {
-					values.put(fieldDefinition.getName(), BaseTypes
-							.ConvertToPrimitive(latitudeValue + "," + longitudeValue, fieldDefinition.getBaseType()));
+			} else {
+				//use custom headers
+				try {
+					String[] headers = _customHeaders.split(",");
+					int i = 0;
+					for (String header : headers) {
+						FieldDefinition field = new FieldDefinition();
+						field.setBaseType(BaseTypes.VARIANT);
+						field.setName(header);
+						field.setOrdinal(i);
+						field.setDescription("");
+						it.addField(field);
+						
+						fieldIndices.put(header, i);
+						i++;
+					}
+				} catch (Exception e) {
+					throw new InvalidRequestException("Error parsing custom headers into DataShape - " + e.getMessage(),
+							RESTAPIConstants.StatusCode.STATUS_NOT_ACCEPTABLE);
 				}
 			}
+		} else if (rowNumber == 1 && _hasHeader && !_hasDatashape) {
+			setFieldType(it,fieldValues,fieldIndices);
 		}
-		it.addRow(values);
-
+		
+		if (rowNumber != 0 || _hasHeader == false) {
+			//parse row (field set) into the correct infotable row and append
+			ValueCollection values = new ValueCollection();
+			for (FieldDefinition fieldDefinition : it.getDataShape().getFields().values()) {
+				int colIndex = ((Integer) fieldIndices.get(fieldDefinition.getName())).intValue();
+				if (colIndex >= 0) {
+					try {
+						switch (fieldDefinition.getBaseType()) {
+						case DATETIME:
+							String dateValue = (String) fieldValues.get(colIndex);
+							if (dateValue != null && !dateValue.isEmpty()) {
+								if (dateFormat != null) {
+									values.put(fieldDefinition.getName(), BaseTypes.ConvertToPrimitive(
+											DateUtilities.parseDateTime(dateValue, dateFormat), fieldDefinition.getBaseType()));
+								} else {
+									values.put(fieldDefinition.getName(),
+											BaseTypes.ConvertToPrimitive(dateValue, fieldDefinition.getBaseType()));
+								}
+							}
+							break;
+						case NUMBER:
+							String numberValue = (String) fieldValues.get(colIndex);
+							if (numberValue != null && !numberValue.isEmpty()) {
+								values.put(fieldDefinition.getName(),
+										BaseTypes.ConvertToPrimitive(numberValue, fieldDefinition.getBaseType()));
+							}
+							break;
+						case LOCATION:
+							if ((latitudeField != -1) && (longitudeField != -1)) {
+								String latitudeValue = (String) fieldValues.get(latitudeField);
+								String longitudeValue = (String) fieldValues.get(longitudeField);
+								if ((latitudeValue != null && !latitudeValue.isEmpty())
+										&& (longitudeValue != null && !longitudeValue.isEmpty())) {
+									values.put(fieldDefinition.getName(), BaseTypes.ConvertToPrimitive(
+											latitudeValue + "," + longitudeValue, fieldDefinition.getBaseType()));
+								}
+							} else {						
+								String value = (String) fieldValues.get(colIndex);
+								if (value != null && !value.isEmpty()) {
+									
+									//check that its really a location
+									if (value.matches("^[-+]?([1-8]?\\d(\\.\\d+)?|90(\\.0+)?),\\s*[-+]?(180(\\.0+)?|((1[0-7]\\d)|([1-9]?\\d))(\\.\\d+)?)$")) {
+										values.put(fieldDefinition.getName(),
+												BaseTypes.ConvertToPrimitive(value, fieldDefinition.getBaseType()));
+									} else {
+										if (!_hasDatashape) {
+											//need to fix the old values which as now json objects
+											for (ValueCollection row : it.getRows())  {
+												Location location = (Location) row.getValue(fieldDefinition.getName());
+												String stringLocation = location.getLatitude() + "," + location.getLongitude();
+												row.SetStringValue(fieldDefinition.getName(),stringLocation);
+											}
+											
+											it.getField(fieldDefinition.getName()).setBaseType(BaseTypes.STRING);
+											values.put(fieldDefinition.getName(),
+													BaseTypes.ConvertToPrimitive(value, fieldDefinition.getBaseType()));
+										} else {
+											throw new InvalidRequestException("Error parsing location for " + fieldDefinition.getName() + " - at row  " +
+													rowNumber,	RESTAPIConstants.StatusCode.STATUS_NOT_ACCEPTABLE);
+										}
+									}
+								}
+							}
+							break;
+						case INTEGER:
+							String integerValue = (String) fieldValues.get(colIndex);
+							if (integerValue != null && !integerValue.isEmpty()) {
+								//are we really an int, or are we a double?
+								try {
+									Integer.parseInt(integerValue);
+									values.put(fieldDefinition.getName(),
+											BaseTypes.ConvertToPrimitive(integerValue, fieldDefinition.getBaseType()));
+								} catch (Exception e) {
+									if (!_hasDatashape) {
+										//its actually a number..
+										it.getField(fieldDefinition.getName()).setBaseType(BaseTypes.NUMBER);
+										values.put(fieldDefinition.getName(),
+												BaseTypes.ConvertToPrimitive(integerValue, fieldDefinition.getBaseType()));
+									} else { 
+										throw new InvalidRequestException("Error parsing integer for " + fieldDefinition.getName() + " - at row  " +
+												rowNumber + " - " + e.getMessage(),
+												RESTAPIConstants.StatusCode.STATUS_NOT_ACCEPTABLE);
+									}
+								}
+							}
+							break;
+						case BOOLEAN:
+							String boolValue = (String) fieldValues.get(colIndex);
+							if (boolValue != null) {
+								if (!_hasDatashape) {
+									//make sure this is really a boolean
+									if (boolValue.equals("true") || boolValue.equals("false")) {
+										values.put(fieldDefinition.getName(),
+												BaseTypes.ConvertToPrimitive(boolValue, BaseTypes.STRING));
+									} else {
+										it.getField(fieldDefinition.getName()).setBaseType(BaseTypes.STRING);
+										values.put(fieldDefinition.getName(), BaseTypes.ConvertToPrimitive(boolValue, BaseTypes.STRING));
+									}
+								} else {
+									values.put(fieldDefinition.getName(),
+											BaseTypes.ConvertToPrimitive(boolValue, BaseTypes.STRING));
+								}
+							}
+							break;
+						default:
+							String value = (String) fieldValues.get(colIndex);
+							if (value != null) {
+								values.put(fieldDefinition.getName(),
+										BaseTypes.ConvertToPrimitive(value, fieldDefinition.getBaseType()));
+							}
+							break;
+						}
+					} catch(Exception e) {
+						if (!_hasDatashape) {
+						//if i hit this it must be a type mismatch, lets see if we can add it as whatever type it is..
+							if (fieldDefinition.getBaseType() == BaseTypes.DATETIME) {
+								//need to fix the old values which weve already converted, we need to convert them back to the originals
+								//this is likely really slow, but it makes sure that we give the correct output when this issue occurs
+								//eventually this will be refactored to scan the csv once to determin the types
+								//then write to the infotable, but this will work for now
+								for (ValueCollection row : it.getRows())  {
+									DateTime date = (DateTime) row.getValue(fieldDefinition.getName());
+									String stringDate = DateUtilities.formatDate(date,dateFormat);
+									row.SetStringValue(fieldDefinition.getName(),stringDate);
+								}
+							}
+							String value = (String) fieldValues.get(colIndex);
+							if (value != null) {
+								it.getField(fieldDefinition.getName()).setBaseType(getTypeFromString(value));
+								values.put(fieldDefinition.getName(), BaseTypes.ConvertToPrimitive(value, getTypeFromString(value)));
+							}
+						} else {
+							throw new InvalidRequestException("Error parsing value for " + fieldDefinition.getName() + " - at row  " +
+									rowNumber + " - " + e.getMessage(),	RESTAPIConstants.StatusCode.STATUS_NOT_ACCEPTABLE);
+						}
+					}
+				} else if ((fieldDefinition.getBaseType() == BaseTypes.LOCATION) && (latitudeField != -1)
+						&& (longitudeField != -1)) {
+					String latitudeValue = (String) fieldValues.get(latitudeField);
+					String longitudeValue = (String) fieldValues.get(longitudeField);
+					if ((latitudeValue != null && !latitudeValue.isEmpty())
+							&& (longitudeValue != null && !longitudeValue.isEmpty())) {
+						values.put(fieldDefinition.getName(), BaseTypes
+								.ConvertToPrimitive(latitudeValue + "," + longitudeValue, fieldDefinition.getBaseType()));
+					}
+				}
+			}
+			it.addRow(values);
+		}
 	}
 
 	protected Object parseJSONValue(Object value, String fieldShape) {
+		//check to see if this is a JSONN object or JSON array. If it is a JSON object this makes a recursive call to parse JSON using the current value as the input
+		//if this is an array we create a new infotable object with a value field and add each of items
 		try {
 			if (value instanceof JSONObject) {
 				InfoTable result = ParseJSON((JSONObject) value, fieldShape, _dateFormat, _minDateMilliseconds);
@@ -447,7 +607,8 @@ public class Parsley extends Resource {
 						ValueCollection values = itemTable.getRow(0);
 						result.setDataShape(itemTable.getDataShape());
 						result.addRow(values);
-					} else {
+					} else {					
+							//only add a new field if this is the first row
 							if (i == 0) {
 								FieldDefinition definition = new FieldDefinition();
 								definition.setName("values");
@@ -461,8 +622,11 @@ public class Parsley extends Resource {
 					}
 				}
 				return result;
+				
 			} else if (IsDate(value)) {
+			//TODO: check if they pass in a dateShape and if the field type is not a date don't attempt to parse	
 				try {
+					//if it's a date type, parse it using the passed in date format. If it's a RAW json date, it comparsed the number value against the mindate milliseconds
 					if (_dateFormat == "RAW") {
 						Double v = new Double(Double.parseDouble(value.toString()));
 						if (v % 1 == 0 && v >= _minDateMilliseconds) {
@@ -490,6 +654,31 @@ public class Parsley extends Resource {
 		return value;
 	}
 
+	protected BaseTypes getTypeFromString(String value) {
+		BaseTypes result = BaseTypes.STRING;
+		
+		try {
+			if (IsDate(value)) {
+				result = BaseTypes.DATETIME;
+			} else if (value.matches("[-+]?\\d*\\.?\\d+")) {
+				//is it an int or a double?
+				try { 
+					Integer.parseInt(value);
+					result = BaseTypes.INTEGER;
+				} catch (Exception e) {
+					//must be a double
+					result = BaseTypes.NUMBER;
+				}
+			} else if (value.matches("^[-+]?([1-8]?\\d(\\.\\d+)?|90(\\.0+)?),\\s*[-+]?(180(\\.0+)?|((1[0-7]\\d)|([1-9]?\\d))(\\.\\d+)?)$")) {
+				result = BaseTypes.LOCATION;
+			} else if (value.equals("true") || value.equals("false")) {
+				result = BaseTypes.BOOLEAN;
+			}
+		} catch(Exception e) {
+			return result;
+		}
+		return result;
+	}
 	protected BaseTypes getType(Object value) {
 		BaseTypes result;
 
