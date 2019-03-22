@@ -2,12 +2,15 @@
 
 # About Parsley #
 
-Parsley aims to allow you to parse CSV files, JSON Objects, and JSON Arrays into InfoTables as painlessly as possible.
+Parsley aims to allow you to parse CSV files, JSON Objects, JSON Arrays, XML Documents, and XLSX files into InfoTables as painlessly as possible, without needing a predefined data shape.
 The Parsley Extension for ThingWorx provides a Parsley Resource with the following services:
 
 * ParseJSON 
-
 * ParseCSV
+* ParseXML
+* ParseXLSX
+
+Note that ParseXLSX is rudimentary and expects a simple grid of data. It also requires the Apache POI libraries, which conflict with some other extensions. A Parsley_No_Poi zip is also included in this directory.
 
 This extension utilizes the Thingworx 6.6.5 SDK. 
 
