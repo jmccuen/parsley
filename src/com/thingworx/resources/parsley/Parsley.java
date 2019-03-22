@@ -20,19 +20,33 @@ import com.thingworx.types.collections.AspectCollection;
 import com.thingworx.types.collections.ValueCollection;
 import com.thingworx.types.collections.ValueCollectionList;
 import com.thingworx.types.primitives.structs.Location;
-
 import java.io.BufferedReader;
+import java.io.FileInputStream;
 import java.io.InputStreamReader;
 import java.io.Reader;
+import java.io.StringWriter;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.HashMap;
 import java.util.Iterator;
 
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
+import javax.xml.transform.Transformer;
+import javax.xml.transform.TransformerFactory;
+import javax.xml.transform.dom.DOMSource;
+import javax.xml.transform.stream.StreamResult;
+
+import org.apache.poi.ss.usermodel.*;
 import org.joda.time.DateTime;
 import org.json.JSONArray;
 import org.json.JSONObject;
+import org.json.XML;
 import org.slf4j.Logger;
+import org.w3c.dom.Document;
+import com.monitorjbl.xlsx.*;
+import com.sun.org.apache.xerces.internal.dom.*;
+
 
 public class Parsley extends Resource {
 
@@ -167,8 +181,6 @@ public class Parsley extends Resource {
 		_customHeaders = customHeaders;
 		
 		
-		
-		
 		if (!(fileRepository != null && !fileRepository.isEmpty())) {
 			throw new InvalidRequestException("File Repository Must Be Specified",
 					RESTAPIConstants.StatusCode.STATUS_NOT_ACCEPTABLE);
@@ -204,6 +216,11 @@ public class Parsley extends Resource {
 		try {parseFromReader(reader, it, columnMappings, hasHeader, fieldDelimiter, stringDelimiter, latitudeField,
 				longitudeField, dateFormat);
 		} catch (IndexOutOfBoundsException e) {
+			try {
+				reader.close();
+			} catch (Exception eClose) {
+				
+			};
 			throw new IndexOutOfBoundsException(
 						"Array index was out of bounds. This generally happens when either the number of columns do not match up to those provided by the data shape."
 						+ " It can also occur if there was an error parsing a datetime based on the input format. - " + e.getMessage()
@@ -214,6 +231,7 @@ public class Parsley extends Resource {
 
 	private void setFieldType(InfoTable it, ArrayList<String> fieldValues, HashMap<String,Integer> fieldIndices) throws Exception {
 		//read row values and set infotable appropriately
+		
 		for (FieldDefinition fieldDefinition : it.getDataShape().getFields().values()) {
 			int colIndex = ((Integer) fieldIndices.get(fieldDefinition.getName())).intValue();
 			if (colIndex >= 0) {
@@ -720,6 +738,225 @@ public class Parsley extends Resource {
 		} catch (Exception e) {
 			return false;
 		}
+	}
+
+	@SuppressWarnings("deprecation")
+	@ThingworxServiceDefinition(name = "ParseXLSX", description = "", category = "", isAllowOverride = false, aspects = {
+			"isAsync:false" })
+	@ThingworxServiceResult(name = "result", description = "", baseType = "INFOTABLE", aspects = {
+			"isEntityDataShape:true" })
+	public InfoTable ParseXLSX(
+			@ThingworxServiceParameter(name = "path", description = "", baseType = "STRING") String path,
+			@ThingworxServiceParameter(name = "fileRepository", description = "", baseType = "THINGNAME") String fileRepository,
+			@ThingworxServiceParameter(name = "hasHeader", description = "", baseType = "BOOLEAN", aspects = {
+					"defaultValue:false" }) Boolean hasHeader,
+			@ThingworxServiceParameter(name = "sheetName", description = "", baseType = "STRING") String sheetName,
+			@ThingworxServiceParameter(name = "dateFormat", description = "", baseType = "STRING") String dateFormat,
+			@ThingworxServiceParameter(name = "dataShape", description = "", baseType = "DATASHAPENAME") String dataShape,
+			@ThingworxServiceParameter(name = "rowCacheSize", description = "Number of rows to cache in the stream reader", baseType = "INTEGER", aspects = {
+					"defaultValue:100"}) Integer rowCacheSize,
+			@ThingworxServiceParameter(name = "streamBufferSize", description = "Buffer size of the stream reader", baseType = "INTEGER", aspects = {
+			"defaultValue:4096"}) Integer streamBufferSize) throws Exception {
+
+		InfoTable it = new InfoTable();
+		
+		_hasHeader = hasHeader;
+		_dateFormat = dateFormat;
+		
+		
+		if (!(fileRepository != null && !fileRepository.isEmpty())) {
+			throw new InvalidRequestException("File Repository Must Be Specified",
+					RESTAPIConstants.StatusCode.STATUS_NOT_ACCEPTABLE);
+		}
+
+		Thing thing = ThingUtilities.findThing(fileRepository);
+		if (thing == null) {
+			throw new InvalidRequestException("File Repository [" + fileRepository + "] Does Not Exist",
+					RESTAPIConstants.StatusCode.STATUS_NOT_FOUND);
+		}
+		if (!(thing instanceof FileRepositoryThing)) {
+			throw new InvalidRequestException("Thing [" + fileRepository + "] Is Not A File Repository",
+					RESTAPIConstants.StatusCode.STATUS_NOT_FOUND);
+		}
+		FileRepositoryThing repo = (FileRepositoryThing) thing;
+
+		
+		if (!(dataShape != null && !dataShape.isEmpty())) {
+			_hasDatashape = false;		
+		} else {
+			_hasDatashape = true;
+			it = InfoTableInstanceFactory.createInfoTableFromDataShape(dataShape);
+		};
+
+		FileInputStream excelFile;
+		try {
+			 excelFile = repo.openFileForRead(path);
+		} catch (Exception eOpen) {
+			throw new InvalidRequestException(
+					"Unable To Open [" + path + "] in [" + fileRepository + "] : " + eOpen.getMessage(),
+					RESTAPIConstants.StatusCode.STATUS_NOT_FOUND);
+		}
+		
+		
+		
+		Workbook workbook;
+		try {
+			workbook = StreamingReader.builder()
+			          .rowCacheSize(rowCacheSize)
+			          .bufferSize(streamBufferSize)
+			          .open(excelFile);
+		} catch (Exception eOpen) {
+			excelFile.close();
+			throw new InvalidRequestException(
+					"Unable To Open [" + path + "] in [" + fileRepository + "] -- invalid XLSX file : " + eOpen.getMessage(),
+					RESTAPIConstants.StatusCode.STATUS_INTERNAL_ERROR);
+		}
+		
+		Sheet sheet;
+		try {
+			sheet = workbook.getSheet(sheetName);
+		} catch (Exception eOpen) {
+			
+			excelFile.close();
+			throw new InvalidRequestException(
+					"Unable To Open [" + sheetName + "] in [" + path + "] -- invalid Sheet Name : " + eOpen.getMessage(),
+					RESTAPIConstants.StatusCode.STATUS_INTERNAL_ERROR);
+		}
+		
+		Iterator<Row> iterator = sheet.iterator();
+		
+		Integer r = 0;
+		Integer c = 0;
+		
+		while (iterator.hasNext()) {
+			
+            Row currentRow = iterator.next();
+            Iterator<Cell> cellIterator = currentRow.iterator();
+            c = 0;
+            JSONObject values = new JSONObject();
+            while (cellIterator.hasNext()) {
+                Cell currentCell = cellIterator.next();
+                
+                if (r == 0 && !_hasDatashape) {
+					if (hasHeader) {
+						Object nameObj = "Error" + (c+1);
+						switch (currentCell.getCellType()) {
+		                case Cell.CELL_TYPE_STRING:
+		                	nameObj = currentCell.getStringCellValue();
+		                    break;
+		                case Cell.CELL_TYPE_BOOLEAN:
+		                	nameObj = currentCell.getBooleanCellValue();
+		                    break;
+		                case Cell.CELL_TYPE_NUMERIC:
+		                	nameObj = currentCell.getNumericCellValue();
+		                    break;	
+						}
+						String name =  String.valueOf(nameObj);
+						
+						
+						//get rid of any weird null characters, strings, parens, which arent allowed in property names
+						name = name.replaceAll("[\uFEFF-\uFFFF]", "");
+						name = name.replaceAll("\\s+","");
+						name = name.replaceAll("[(]","_");
+						name = name.replaceAll("[)]","");
+						
+						//cant start with a number
+						if (Character.isDigit(name.charAt(0))) {
+							name = "_" + name;
+						}
+						
+						FieldDefinition field = new FieldDefinition();
+						field.setBaseType(BaseTypes.VARIANT);
+						field.setName(name);
+						field.setOrdinal(c);
+						field.setDescription("");
+						it.addField(field);					
+					} else {
+						FieldDefinition field = new FieldDefinition();
+						
+						field.setBaseType(BaseTypes.VARIANT);
+						field.setName("Value"+(c+1));
+						field.setOrdinal(c);
+						field.setDescription("");
+						it.addField(field);
+					}
+				}
+                
+                FieldDefinition field = it.getDataShape().getFields().getOrderedFieldsByOrdinal().get(c);
+                
+                Object value = "Error - unknown type";
+                
+               
+                switch (currentCell.getCellType()) {
+	                case Cell.CELL_TYPE_STRING:
+	                	value = currentCell.getStringCellValue();
+	                    break;
+	                case Cell.CELL_TYPE_BOOLEAN:
+	                	value = currentCell.getBooleanCellValue();
+	                    break;
+	                case Cell.CELL_TYPE_NUMERIC:
+	                	value = currentCell.getNumericCellValue();
+	                    break;	
+                }
+
+                
+                BaseTypes type = getTypeFromString(String.valueOf(value));
+                
+                if (it.getField(field.getName()).getBaseType() != BaseTypes.STRING && it.getField(field.getName()).getBaseType() != type) {
+                	it.getField(field.getName()).setBaseType(type);
+                }
+                
+                try {
+                	values.put(field.getName(), BaseTypes.ConvertToPrimitive(value,type));
+                } catch (Exception e) {
+                	values.put(field.getName(), BaseTypes.ConvertToPrimitive(value,BaseTypes.STRING));
+                }
+                      
+                c++;
+            }
+            
+            if (!hasHeader || r > 0) {
+            	it.AddRow(values);
+            }
+            r++;
+		};
+		
+		excelFile.close();
+
+		return it;
+		
+			
+	}
+	
+	@ThingworxServiceDefinition(name = "ParseXML", description = "Parse JSON")
+	@ThingworxServiceResult(name = "result", description = "Result", baseType = "INFOTABLE")
+	public InfoTable ParseXML(
+			@ThingworxServiceParameter(name = "xml", description = "XML data to parse", baseType = "XML") Document xml,
+			@ThingworxServiceParameter(name = "dataShape", description = "Data shape", baseType = "DATASHAPENAME", aspects = {
+					"defaultValue:" }) String dataShape,
+			@ThingworxServiceParameter(name = "dateFormat", description = "joda format - e.g. 'yyyy-MM-dd'T'HH:mm:ss.SSSZ' ", baseType = "STRING", aspects = {
+					"defaultValue:RAW" }) String dateFormat,
+			@ThingworxServiceParameter(name = "minDateMilliseconds", description = "i.e. 10000000000;  only used if dateFormat is undefined or RAW", baseType = "LONG", aspects = {
+					"defaultValue:100000000" }) Long minDateMilliseconds)
+			throws Exception {	
+		
+			InfoTable it = new InfoTable();
+			
+			DOMSource domSource = new DOMSource(xml);
+			StringWriter writer = new StringWriter();
+			StreamResult result = new StreamResult(writer);
+			TransformerFactory tf = TransformerFactory.newInstance();
+			Transformer transformer = tf.newTransformer();
+			transformer.transform(domSource, result);
+			
+			JSONObject json = XML.toJSONObject(writer.toString());
+			
+			it = this.ParseJSON(json, dataShape, dateFormat, minDateMilliseconds);
+			
+			
+			return it;
+		
+		
 	}
 
 }
