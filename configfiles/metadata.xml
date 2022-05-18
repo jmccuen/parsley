@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <Entities>
     <ExtensionPackages>
-        <ExtensionPackage dependsOn="" description="" minimumThingWorxVersion="6.6.5" name="parsley" packageVersion="2.2.7" vendor="Thingworx Labs">
+        <ExtensionPackage dependsOn="" description="" minimumThingWorxVersion="6.6.5" name="parsley" packageVersion="2.2.8" vendor="Thingworx Labs">
             <JarResources>
                 <FileResource description="Parsley - A Parsing Library" file="parsley.jar" type="JAR"/>
                 <FileResource description="" file="xlsx-streamer-1.2.1.jar" type="JAR"/>
